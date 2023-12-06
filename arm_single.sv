@@ -230,25 +230,25 @@ module decoder(input  logic [1:0] Op,
   always_comb
     if (ALUOp) begin                 // which DP Instr?
       case(Funct[4:1]) 
-  	    4'b0100: 	begin 
+  	  4'b0100: 	begin 
 				ALUControl = 2'b00; // ADD
         NoWrite = 1'b0;
 				MovF = 1'b0;
 			end
 
-  	    4'b0010: 	begin
+  	  4'b0010: 	begin
 				ALUControl = 2'b01; // SUB
         NoWrite = 1'b0;
 				MovF = 1'b0;
 			end
 
-            4'b0000: 	begin
+      4'b0000: 	begin
 			 	ALUControl = 2'b10; // AND
         NoWrite = 1'b0;
 				MovF = 1'b0;
 			end
 
-  	    4'b1100: 	begin
+  	  4'b1100: 	begin
 				ALUControl = 2'b11; // ORR
         NoWrite = 1'b0;
 				MovF = 1'b0;
@@ -265,8 +265,14 @@ module decoder(input  logic [1:0] Op,
         NoWrite = 1'b1;
         MovF = 1'b0;
       end
+
+      4'b1000:  begin
+        ALUControl = 2'b10; //TST
+        NoWrite = 1'b1;
+        MovF = 1'b0;
+      end
 				
-  	    default: 	begin
+  	  default: 	begin
 				ALUControl = 2'bx;  // unimplemented
         NoWrite = 1'b0;
 				MovF = 1'b0;
