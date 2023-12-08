@@ -155,21 +155,21 @@ module arm(input  logic        clk, reset,
            input  logic [31:0] ReadData);
 
   logic [3:0] ALUFlags;
-  logic       RegWrite,
-              ALUSrc, MemtoReg, PCSrc, MaskLDR;      
+  logic       RegWrite, MovFlag,
+              ALUSrc, MemtoReg, PCSrc, MaskLDR, BranchLinkado;      
   logic [1:0] RegSrc, ImmSrc;
   logic [2:0] ALUControl;
 
   controller c(clk, reset, Instr[31:12], ALUFlags, 
                RegSrc, RegWrite, ImmSrc, 
                ALUSrc, ALUControl,
-               MemWrite, MemtoReg, MovFlag, PCSrc, MaskLDR, MaskSTR);
+               MemWrite, MemtoReg, MovFlag, PCSrc, MaskLDR, MaskSTR, BranchLinkado);
   datapath dp(clk, reset, 
               RegSrc, RegWrite, ImmSrc,
               ALUSrc, ALUControl,
               MemtoReg, PCSrc, MovFlag,
               ALUFlags, PC, Instr,
-              ALUResult, WriteData, ReadData, MaskLDR, MaskSTR);
+              ALUResult, WriteData, ReadData, MaskLDR, MaskSTR, BranchLinkado);
 endmodule
 
 module controller(input  logic         clk, reset,
@@ -183,16 +183,16 @@ module controller(input  logic         clk, reset,
                   output logic         MemWrite, MemtoReg,
 		              output logic	       MovFlag,
                   output logic         PCSrc,
-                  output logic         MaskLDR, MaskSTR);  
+                  output logic         MaskLDR, MaskSTR, BLFlag);  
 
   logic [1:0] FlagW;
   logic       PCS, RegW, MemW, MovF, NoWrite;
   
   decoder dec(Instr[27:26], Instr[25:20], Instr[15:12],
               FlagW, PCS, RegW, MemW,
-              MemtoReg, ALUSrc, MovF, NoWrite, ImmSrc, RegSrc, MaskLDR, MaskSTR, ALUControl);
+              MemtoReg, ALUSrc, MovF, NoWrite, ImmSrc, RegSrc, MaskLDR, MaskSTR, BLFlag, ALUControl);
   condlogic cl(clk, reset, Instr[31:28], ALUFlags,
-               FlagW, PCS, RegW, MemW, MovF, NoWrite,
+               FlagW, PCS, RegW, MemW, MovF, NoWrite, BLFlag,
                PCSrc, RegWrite, MemWrite, MovFlag);
 endmodule
 
@@ -203,10 +203,10 @@ module decoder(input  logic [1:0] Op,
                output logic       PCS, RegW, MemW,
                output logic       MemtoReg, ALUSrc, MovF, NoWrite,
                output logic [1:0] ImmSrc, RegSrc,
-               output logic MaskLDR, MaskSTR,
+               output logic MaskLDR, MaskSTR, BLFlag,
                output logic [2:0] ALUControl);
 
-  logic [11:0] controls;
+  logic [12:0] controls;
   logic       Branch, ALUOp;
 
   // Main Decoder
@@ -214,32 +214,32 @@ module decoder(input  logic [1:0] Op,
   always_comb
   	case(Op)
   	                        
-  	  2'b00: if (Funct[5])  controls = 12'b000010100100; // Data processing immediate
+  	  2'b00: if (Funct[5])  controls = 13'b0000101001000; // Data processing immediate
   	                        
-  	         else           controls = 12'b000000100100; // Data processing register
+  	         else           controls = 13'b0000001001000; // Data processing register
   	                        
   	  2'b01: if (Funct[0])  
-                if (Funct[2]) controls = 12'b000111100010; //LDRB 
+                if (Funct[2]) controls = 13'b0001111000100; //LDRB 
 
-                else        controls = 12'b000111100000; // LDR
+                else        controls = 13'b0001111000000; // LDR
 
   	          else
-                if(Funct[2]) controls = 12'b100111010001; //SRTB
+                if(Funct[2]) controls = 13'b1001110100010; //SRTB
 
                 else        
-                controls = 12'b100111010000; // STR
+                controls = 13'b1001110100000; // STR
 
   	                        
-  	  2'b10: if (Funct[0]) controls = 12'b011010001000; //BL
+  	  2'b10: if (Funct[4]) controls = 13'b0110101010001; //BL
 
                 else 
-                controls = 12'b011010001000; // B
+                controls = 13'b0110100010000; // B
            
   	  default:              controls = 12'bx; // Unimplemented          
   	endcase
 
   assign {RegSrc, ImmSrc, ALUSrc, MemtoReg, 
-          RegW, MemW, Branch, ALUOp, MaskLDR, MaskSTR} = controls; 
+          RegW, MemW, Branch, ALUOp, MaskLDR, MaskSTR, BLFlag} = controls; 
           
   // ALU Decoder             
   always_comb
@@ -318,12 +318,13 @@ module condlogic(input  logic       clk, reset,
                  input  logic [3:0] Cond,
                  input  logic [3:0] ALUFlags,
                  input  logic [1:0] FlagW,
-                 input  logic       PCS, RegW, MemW, MovF, NoWrite,
-                 output logic       PCSrc, RegWrite, MemWrite, MovFlag);
+                 input  logic       PCS, RegW, MemW, MovF, NoWrite, BLFlag,
+                 output logic       PCSrc, RegWriteBL, MemWrite, MovFlag);
                  
   logic [1:0] FlagWrite;
   logic [3:0] Flags;
   logic       CondEx;
+  logic       RegWrite;
 
   flopenr #(2)flagreg1(clk, reset, FlagWrite[1], 
                        ALUFlags[3:2], Flags[3:2]);
@@ -337,6 +338,7 @@ module condlogic(input  logic       clk, reset,
   assign MemWrite  = MemW  & CondEx;
   assign PCSrc     = PCS   & CondEx;
   assign MovFlag   = MovF  & CondEx;
+  assign RegWriteBL = (BLFlag) ? 1'b1 : RegWrite;
 endmodule    
 
 module condcheck(input  logic [3:0] Cond,
@@ -383,11 +385,11 @@ module datapath(input  logic        clk, reset,
                 input  logic [31:0] Instr,
                 output logic [31:0] ALUResult, WriteData,
                 input  logic [31:0] ReadData,
-                input  logic        MaskLDR, MaskSTR);
+                input  logic        MaskLDR, MaskSTR, BranchLinkado);
 
   logic [31:0] PCNext, PCPlus4, PCPlus8;
   logic [31:0] ExtImm, SrcA, SrcB, Result, MovORAluResult, ReadData2, WriteData2;
-  logic [3:0]  RA1, RA2;
+  logic [3:0]  RA1, RA2, RA3;
 
   //Mascara LDRB
   always_comb
@@ -412,11 +414,12 @@ module datapath(input  logic        clk, reset,
   // register file logic
   mux2 #(4)   ra1mux(Instr[19:16], 4'b1111, RegSrc[0], RA1);
   mux2 #(4)   ra2mux(Instr[3:0], Instr[15:12], RegSrc[1], RA2);
+  mux2 #(4)   ra3mux(Instr[15:12], 4'b1110, BranchLinkado, RA3);
 
 
 
-  regfile     rf(clk, RegWrite, RA1, RA2,
-                 Instr[15:12], Result, PCPlus8, 
+  regfile     rf(clk, PCPlus4, BranchLinkado, RegWrite, RA1, RA2, RA3,
+                 Result, PCPlus8, 
                  SrcA, WriteData2); 
 
 
@@ -432,20 +435,29 @@ module datapath(input  logic        clk, reset,
 endmodule
 
 module regfile(input  logic        clk, 
-               input  logic        we3, 
+               input  logic [31:0] PC4,
+               input  logic        BL,
+               input  logic        we3,
                input  logic [3:0]  ra1, ra2, wa3, 
                input  logic [31:0] wd3, r15,
                output logic [31:0] rd1, rd2);
 
   logic [31:0] rf[14:0];
+  logic [31:0] WriteDataPC;
 
   // three ported register file
   // read two ports combinationally
   // write third port on rising edge of clock
   // register 15 reads PC+8 instead
 
+  always_comb
+    case(BL)
+      1'b0: WriteDataPC = wd3;
+      1'b1: WriteDataPC = PC4;
+    endcase
+
   always_ff @(posedge clk)
-    if (we3) rf[wa3] <= wd3;	
+    if (we3) rf[wa3] <= WriteDataPC;	
 
   assign rd1 = (ra1 == 4'b1111) ? r15 : rf[ra1];
   assign rd2 = (ra2 == 4'b1111) ? r15 : rf[ra2];
